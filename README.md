@@ -1,57 +1,92 @@
-# 360T7 固件构建（ImmortalWrt mt798x 6.6 + WireGuard）
+# 360T7 固件构建（ImmortalWrt 25.12 · 刷不死 U-Boot 布局）
 
-为 **360 T7（MT7981）** 构建带 WireGuard 的固件，源码来自
-[`padavanonly/immortalwrt-mt798x-6.6`](https://github.com/padavanonly/immortalwrt-mt798x-6.6)
-分支 `mt798x-mt799x-6.6-mtwifi`（6.6 内核 + MTK `mt_wifi` 闭源驱动）。
+为 **360 T7（MT7981，128MB SPI-NAND，256MB 内存）** 构建带 WireGuard 和上网管理的固件。
 
-## 为什么用这个分支
+- 源码：官方 [`immortalwrt/immortalwrt`](https://github.com/immortalwrt/immortalwrt) tag `v25.12.2`（内核 6.12，apk 包管理）
+- 设备：`mediatek/filogic` → `qihoo_360t7-ubootmod`（custom U-Boot layout）
+- 刷机方式：刷不死 U-Boot 的恢复网页，**不碰 BL2 / FIP**
 
-原来那套 `24.10-SNAPSHOT r33079-53c48bbd7e`（target `mediatek/mt7981`、内核 5.4.284）
-的上游已经废弃：`mt7981` 子目标被 ImmortalWrt 官方从源码树里移除，个人 fork
-`Xiaoze886/immortalwrt-mt798x-24.10` 自 2025-07-20 起停更，`kmod-wireguard` 无处可装。
+## 适用前提
 
-本分支把同一批设备迁到 6.6 内核，WireGuard 回到主线，`DEFAULT_PACKAGES` 里已自带
-`kmod-wireguard`。
+这个固件只适用于 FIP 分区里装的是**魔改"刷不死"U-Boot**（hanwckf bl-mt798x 一类，带网页恢复）的机器。
+在当前系统里确认：
 
-## 构建内容
+```sh
+strings /dev/mtd4 | grep -iE "U-Boot 20|failsafe"   # 应看到 "Web failsafe UI started"
+cat /proc/mtd                                       # ubi 应为 06c00000（108M），起始 0x580000
+```
 
-- 目标：`mediatek/filogic`，设备 `qihoo_360t7`
-- 额外预装：`wireguard-tools`、`luci-proto-wireguard`、`luci-app-wireguard`、中文语言包
-- 产物：`*sysupgrade.itb`、`*recovery.itb`、`bl31-uboot.fip`、`preloader.bin`、相关 ipk
+原厂 U-Boot 的机器**不要**用这个固件。
 
-## 触发方式
+## 为什么是 ubootmod，而不是官方的 `qihoo_360t7`
 
-仓库 → Actions → `Build 360T7 Firmware` → Run workflow。首次约 2–3 小时。
+官方的 `qihoo_360t7` / `qihoo_360t7-ubi` 用的是 OpenWrt 自己的 U-Boot（内核以 FIT 形式放在 UBI 卷里，环境变量也存在 UBI 里），
+装它就**必须改写 BL2 和 FIP**：
+- 会覆盖掉刷不死 U-Boot，网页恢复功能就没了；
+- 写坏了只能拆机接 TTL 串口救。
 
-构建完成后在 run 页面底部下载 `360t7-firmware` artifact。
+`ubootmod` 布局沿用刷不死 U-Boot 认得的经典 UBI 三卷（kernel / rootfs / rootfs_data），分区表和原机一致，
+从恢复网页直接刷，刷坏了可以随时重刷。
+
+ImmortalWrt 23.05 曾官方提供 `qihoo_360t7-ubootmod`，24.10 起去掉了。这里的设备树和设备定义（[`ubootmod/`](ubootmod/)）取自
+[dontshootitsme/immortalwrt-25.12.x-…-qihoo_360t7-ubootmod-squashfs](https://github.com/dontshootitsme/immortalwrt-25.12.x-mediatek-filogic-qihoo_360t7-ubootmod-squashfs)
+（commit `1c204a7`），由 23.05 官方定义移植到 25.12，与官方 23.05 一样开启 NMBM。CI 额外修补了 `02_network`，
+让网口配置为 `lan1 lan2 lan3` + `wan`（否则会多出一个不存在的 `lan4`）。
 
 ## 预装清单
 
 | 类别 | 内容 |
 |---|---|
-| WireGuard | `kmod-wireguard`、`wireguard-tools`、`luci-proto-wireguard`、`luci-app-wireguard` |
+| WireGuard | `kmod-wireguard`、`wireguard-tools`、`luci-proto-wireguard` |
 | 上网管理 | `appfilter`（应用/网站过滤）、`banip`（黑名单）、`adblock`、`https-dns-proxy` |
-| 时间与限速 | `wifischedule`（定时关 Wi-Fi）、`nft-qos`（按设备限速）、`sqm`（抗缓冲） |
+| 时间与限速 | `wifischedule`（定时关 Wi-Fi）、`eqos`（按设备限速）、`sqm`（抗缓冲，cake） |
 | 设备管控 | `arpbind`（IP-MAC 绑定）、`nlbwmon`（每设备流量统计） |
-| 代理 | `luci-app-openclash` |
-| 运维 | `ttyd`（网页终端）、`attendedsysupgrade`（一键升级）、`package-manager`、`ddns` + cloudflare、`vlmcsd` |
-| 工具 | bash、curl、wget-ssl、htop、nano、socat、tcpdump、ip-full、ipset、zram-swap |
+| 代理 | `luci-app-openclash` + `kmod-tun` |
+| 运维 | `ttyd`（网页终端）、`package-manager`、`ddns` + cloudflare、`vlmcsd` |
+| 工具 | bash、curl、wget-ssl、htop、nano、socat、tcpdump、ip-full、ipset、zram-swap、block-mount、dnsmasq-full |
 
-## 和旧固件相比会失去什么
+和 24.10 时期清单相比的变化：
+- `luci-app-nft-qos` 在 25.12 源里已没有，改用 `luci-app-eqos`；
+- 去掉了 `attendedsysupgrade`：在线升级服务器不认识自编的 ubootmod profile，用不了；
+- 25.12 用 **apk** 代替 opkg：`apk update`、`apk add <包>`。
 
-旧固件是 MTK SDK 那套（`mediatek/mt7981` + 5.4 内核），下列包**依赖 MTK 闭源驱动 `mt_wifi`，在 6.6/filogic 上不存在**：
+## 内核模块与官方源一致（vermagic）
 
-- `luci-app-mtwifi-cfg`（MTK 无线高级参数面板）
-- `luci-app-turboacc-mtk`（MTK 硬件加速开关）→ 用「防火墙 → 软件/硬件流量分载」替代
-- `luci-app-eqos-mtk`（MTK QoS）→ 用 `luci-app-nft-qos` 替代
-- `luci-app-upnp-mtk-adjust`、`mtkhqos_util`、`mtk-smp`、`mhz`、`regs`
+默认（`match_official_kmods = true`）用官方 buildbot 的 `config.buildinfo` 作种子配置（保留内核选项和 `ALL_KMODS`），
+目标是让内核 vermagic 与官方 25.12.2 一致，这样刷机后可以直接 `apk add` 官方源里的任意 `kmod-*`。
+构建结束时 CI 会比对，结果写在 “Check images and vermagic” 一步的日志里；不一致会标 warning，
+此时需要的内核模块只能编进固件。代价是构建更久（要编所有 kmod）。
 
-360T7 在新分支里走 **mt76 开源驱动**（`kmod-mt7915e`），不是 `mt_wifi`。
+## 触发方式
 
-## 刷机前必读
+仓库 → Actions → `Build 360T7 Firmware` → Run workflow（可改版本号、关闭 kmod 对齐）。
+推送到 `main` 也会自动触发；只改文档时在提交信息里加 `[skip ci]`。
 
-1. **先备份全盘**：`dd if=/dev/mtd0 of=/tmp/mtd0.bin`，把 128MB 完整备份拉到电脑上。
-2. 先刷 `*recovery.itb`（initramfs，跑在内存里，不写 flash）验证 Wi-Fi 和网口正常。
-3. 确认无误再写 `sysupgrade.itb`。
-4. 该设备 profile 使用 `KERNEL_IN_UBI` / `UBOOTENV_IN_UBI`，bootloader 与当前
-   原厂 uboot 可能不兼容；若 recovery 起不来，走 TFTP 恢复，不要硬刷。
+构建完成后在 run 页面底部下载 `360t7-ubootmod-<版本>` artifact，内含：
+
+| 文件 | 用途 |
+|---|---|
+| `*-qihoo_360t7-ubootmod-squashfs-factory.bin` | **恢复网页上传这个**（完整 UBI 镜像，全新安装） |
+| `*-qihoo_360t7-ubootmod-squashfs-sysupgrade.bin` | 已经装了本固件后，系统内 `sysupgrade` 升级（保留配置） |
+| `*-qihoo_360t7-ubootmod-initramfs-kernel.bin` | 调试用，恢复网页不吃它 |
+| `sha256sums` | 校验 |
+
+## 刷机步骤
+
+1. **备份**（在当前系统里，不影响使用）：
+   ```sh
+   for i in 1 2 3 4 6 7; do cat /dev/mtd$i > /tmp/mtd$i.bin; done
+   md5sum /tmp/mtd*.bin
+   ```
+   用 `scp -O` 拷到电脑。**`Factory`（无线校准数据）最重要**，多存几份。旧的 `/etc/config` 只作对照，不要导入新系统。
+2. **核对** `factory.bin` 的 sha256。
+3. **进恢复网页**：拔电 → 按住 reset 通电 5–10 秒 → 电脑网线接 LAN 口，网卡设 `192.168.1.2/24` → 打开 `192.168.1.1`。
+4. 上传 `*-squashfs-factory.bin`，等待写入并重启。
+5. 电脑网卡改回自动获取（DHCP），打开新系统 `192.168.1.1`，先设置 root 密码，再逐项配置。
+6. 出问题：回到第 3 步，重刷本固件，或者刷官方
+   `immortalwrt-23.05.7-mediatek-filogic-qihoo_360t7-ubootmod-squashfs-factory.bin` 兜底。
+
+## 红线
+
+- **永远不要刷 BL2 / FIP / preloader**，也不要用官方 `qihoo_360t7` 的 `*.itb`、`bl31-uboot.fip`、`preloader.bin`。
+- 从别的固件**首次**装本固件，用恢复网页刷 `factory.bin`，不要在旧系统里 `sysupgrade -F`（板名和布局都不同）。
