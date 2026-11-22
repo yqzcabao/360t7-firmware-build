@@ -12,7 +12,7 @@ concurrency:
 env:
   # 目标包清单，构建后逐项核对，缺失的会在日志里标 warning
   EXPECTED: >-
-    kmod-wireguard wireguard-tools luci-proto-wireguard luci-app-wireguard
+    kmod-wireguard wireguard-tools luci-proto-wireguard
     appfilter luci-app-appfilter luci-app-banip luci-app-adblock
     luci-app-https-dns-proxy luci-app-wifischedule luci-app-arpbind
     luci-app-nft-qos luci-app-sqm luci-app-nlbwmon
@@ -66,7 +66,6 @@ jobs:
           CONFIG_PACKAGE_kmod-wireguard=y
           CONFIG_PACKAGE_wireguard-tools=y
           CONFIG_PACKAGE_luci-proto-wireguard=y
-          CONFIG_PACKAGE_luci-app-wireguard=y
 
           # --- 上网管理 / 家长控制 ---
           CONFIG_PACKAGE_appfilter=y
@@ -115,8 +114,6 @@ jobs:
           # --- 中文 ---
           CONFIG_PACKAGE_luci-i18n-base-zh-cn=y
           CONFIG_PACKAGE_luci-i18n-firewall-zh-cn=y
-          CONFIG_PACKAGE_luci-i18n-wireguard-zh-cn=y
-          CONFIG_PACKAGE_luci-i18n-openclash-zh-cn=y
           CONFIG_PACKAGE_luci-i18n-appfilter-zh-cn=y
           CONFIG_PACKAGE_luci-i18n-adblock-zh-cn=y
           CONFIG_PACKAGE_luci-i18n-banip-zh-cn=y
