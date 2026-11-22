@@ -1,0 +1,15 @@
+#!/bin/sh
+# 官方 25.12 没有发布 video 源的索引（404），apk update 会报错；
+# 固件里已经去掉了这个 feed，这里再兜底清一次（sysupgrade 保留配置时旧文件会被带过来）
+for f in /etc/apk/repositories /etc/apk/repositories.d/*.list; do
+	[ -f "$f" ] && sed -i '/\/video\/\{0,1\}\(packages\.adb\)\{0,1\}[[:space:]]*$/d' "$f"
+done
+
+# 默认主题设为 argon（只在还是默认 bootstrap 或未设置时改，不覆盖用户自己选的）
+cur=$(uci -q get luci.main.mediaurlbase)
+if [ -d /www/luci-static/argon ] && { [ -z "$cur" ] || [ "$cur" = /luci-static/bootstrap ]; }; then
+	uci set luci.main.mediaurlbase=/luci-static/argon
+	uci commit luci
+fi
+
+exit 0

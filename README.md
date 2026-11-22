@@ -44,11 +44,16 @@ ImmortalWrt 23.05 曾官方提供 `qihoo_360t7-ubootmod`，24.10 起去掉了。
 | 代理 | 只预装 OpenClash 需要的内核模块：`kmod-tun`、`kmod-nft-tproxy`、`kmod-inet-diag`（另有 `dnsmasq-full`）。OpenClash 本体刷机后装，见下文 |
 | 运维 | `ttyd`（网页终端）、`package-manager`、`ddns` + cloudflare、`vlmcsd` |
 | 工具 | bash、curl、wget-ssl、htop、nano、socat、tcpdump、ip-full、ipset、zram-swap、block-mount、dnsmasq-full |
+| 主题 | `luci-theme-argon`（默认主题）+ `luci-app-argon-config`（系统 → Argon 主题设置） |
+
+首次启动脚本 [`files/etc/uci-defaults/99-custom`](files/etc/uci-defaults/99-custom)：默认主题设为 argon（不覆盖已手动选的主题），
+并从 apk 源列表里删掉 `video` 源。
 
 和 24.10 时期清单相比的变化：
 - `luci-app-nft-qos` 在 25.12 源里已没有，改用 `luci-app-eqos`；
 - 去掉了 `attendedsysupgrade`：在线升级服务器不认识自编的 ubootmod profile，用不了；
 - 25.12 用 **apk** 代替 opkg：`apk update`、`apk add <包>`。
+- 去掉了 `video` feed：官方 25.12 不发布这个源的索引（`.../aarch64_cortex-a53/video` 是 404），留着会让 `apk update` 报错。
 - OpenClash 不再编进固件（它依赖 ruby，ruby 默认的 YJIT 要编 Rust，而 Rust 构建要下载的 LLVM 已被上游删除）。刷机后安装：
   ```sh
   apk update
