@@ -25,6 +25,29 @@
 
 构建完成后在 run 页面底部下载 `360t7-firmware` artifact。
 
+## 预装清单
+
+| 类别 | 内容 |
+|---|---|
+| WireGuard | `kmod-wireguard`、`wireguard-tools`、`luci-proto-wireguard`、`luci-app-wireguard` |
+| 上网管理 | `appfilter`（应用/网站过滤）、`banip`（黑名单）、`adblock`、`https-dns-proxy` |
+| 时间与限速 | `wifischedule`（定时关 Wi-Fi）、`nft-qos`（按设备限速）、`sqm`（抗缓冲） |
+| 设备管控 | `arpbind`（IP-MAC 绑定）、`nlbwmon`（每设备流量统计） |
+| 代理 | `luci-app-openclash` |
+| 运维 | `ttyd`（网页终端）、`attendedsysupgrade`（一键升级）、`package-manager`、`ddns` + cloudflare、`vlmcsd` |
+| 工具 | bash、curl、wget-ssl、htop、nano、socat、tcpdump、ip-full、ipset、zram-swap |
+
+## 和旧固件相比会失去什么
+
+旧固件是 MTK SDK 那套（`mediatek/mt7981` + 5.4 内核），下列包**依赖 MTK 闭源驱动 `mt_wifi`，在 6.6/filogic 上不存在**：
+
+- `luci-app-mtwifi-cfg`（MTK 无线高级参数面板）
+- `luci-app-turboacc-mtk`（MTK 硬件加速开关）→ 用「防火墙 → 软件/硬件流量分载」替代
+- `luci-app-eqos-mtk`（MTK QoS）→ 用 `luci-app-nft-qos` 替代
+- `luci-app-upnp-mtk-adjust`、`mtkhqos_util`、`mtk-smp`、`mhz`、`regs`
+
+360T7 在新分支里走 **mt76 开源驱动**（`kmod-mt7915e`），不是 `mt_wifi`。
+
 ## 刷机前必读
 
 1. **先备份全盘**：`dd if=/dev/mtd0 of=/tmp/mtd0.bin`，把 128MB 完整备份拉到电脑上。
