@@ -151,6 +151,8 @@
 			partition@0 {
 				label = "BL2";
 				reg = <0x00000 0x100000>;
+				/* never overwrite the bootloader from Linux */
+				read-only;
 			};
 
 			partition@100000 {
@@ -166,6 +168,8 @@
 			partition@380000 {
 				label = "FIP";
 				reg = <0x380000 0x200000>;
+				/* holds the unbrickable U-Boot (web failsafe) */
+				read-only;
 			};
 
 			ubi: partition@580000 {

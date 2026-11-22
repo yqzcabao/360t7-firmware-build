@@ -264,7 +264,8 @@ jobs:
         run: |
           cd openwrt
           [ -d .ccache ] || exit 0
-          staging_dir/host/bin/ccache -s 2>/dev/null || true
+          # OpenWrt 把缓存放在 openwrt/.ccache，不指定的话 ccache -s 读的是空的 ~/.ccache
+          CCACHE_DIR="$PWD/.ccache" staging_dir/host/bin/ccache -s 2>/dev/null || true
           du -sh .ccache
 
       - name: Save ccache
