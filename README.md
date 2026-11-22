@@ -41,7 +41,7 @@ ImmortalWrt 23.05 曾官方提供 `qihoo_360t7-ubootmod`，24.10 起去掉了。
 | 上网管理 | `appfilter`（应用/网站过滤）、`banip`（黑名单）、`adblock`、`https-dns-proxy` |
 | 时间与限速 | `wifischedule`（定时关 Wi-Fi）、`eqos`（按设备限速）、`sqm`（抗缓冲，cake） |
 | 设备管控 | `arpbind`（IP-MAC 绑定）、`nlbwmon`（每设备流量统计） |
-| 代理 | `luci-app-openclash` + `kmod-tun` |
+| 代理 | 只预装 OpenClash 需要的内核模块：`kmod-tun`、`kmod-nft-tproxy`、`kmod-inet-diag`（另有 `dnsmasq-full`）。OpenClash 本体刷机后装，见下文 |
 | 运维 | `ttyd`（网页终端）、`package-manager`、`ddns` + cloudflare、`vlmcsd` |
 | 工具 | bash、curl、wget-ssl、htop、nano、socat、tcpdump、ip-full、ipset、zram-swap、block-mount、dnsmasq-full |
 
@@ -49,6 +49,19 @@ ImmortalWrt 23.05 曾官方提供 `qihoo_360t7-ubootmod`，24.10 起去掉了。
 - `luci-app-nft-qos` 在 25.12 源里已没有，改用 `luci-app-eqos`；
 - 去掉了 `attendedsysupgrade`：在线升级服务器不认识自编的 ubootmod profile，用不了；
 - 25.12 用 **apk** 代替 opkg：`apk update`、`apk add <包>`。
+- OpenClash 不再编进固件（它依赖 ruby，ruby 默认的 YJIT 要编 Rust，而 Rust 构建要下载的 LLVM 已被上游删除）。刷机后安装：
+  ```sh
+  apk update
+  apk add luci-app-openclash
+  ```
+  ruby 等用户态依赖从官方源拉；它需要的内核模块已预装，不受 vermagic 影响。也可以用
+  [OpenClash Releases](https://github.com/vernesong/OpenClash/releases) 里的 `.apk`。
+
+## 编译缓存
+
+CI 用 `actions/cache` 保存 `dl/`（源码包）和 ccache（编译缓存），**失败或超时也会保存**，下次从最近一份恢复。
+首次运行没有缓存；之后只改包清单的话，大部分文件会命中缓存。命中率见 “ccache stats” 一步。
+编译步骤单独限时 315 分钟，比整个任务的 355 分钟早结束，留时间保存缓存。
 
 ## 内核模块与官方源一致（vermagic）
 

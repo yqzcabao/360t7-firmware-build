@@ -26,13 +26,15 @@ env:
   # push 触发时 inputs 为空，默认 true
   MATCH_KMODS: ${{ github.event_name == 'workflow_dispatch' && !inputs.match_official_kmods && 'false' || 'true' }}
   DEVICE: qihoo_360t7-ubootmod
+  # ccache 上限（未压缩；actions/cache 存的时候会再压缩）。仓库缓存总额 10GB，旧的自动淘汰
+  CCACHE_MAXSIZE: 6G
   # 构建后逐项核对，缺失的会在日志里标 warning
   EXPECTED: >-
     kmod-wireguard wireguard-tools luci-proto-wireguard
     appfilter luci-app-appfilter luci-app-banip luci-app-adblock
     luci-app-https-dns-proxy luci-app-wifischedule luci-app-arpbind
     luci-app-eqos luci-app-sqm luci-app-nlbwmon
-    luci-app-openclash luci-app-ttyd
+    kmod-tun kmod-nft-tproxy kmod-inet-diag dnsmasq-full luci-app-ttyd
     luci-app-package-manager luci-app-ddns luci-app-vlmcsd
 
 jobs:
@@ -89,6 +91,22 @@ jobs:
             exit 1
           fi
 
+      # 缓存：dl/ 源码包 + ccache 编译缓存。每次运行存一份新的（失败/超时也存），
+      # 下次从最近一份恢复，已经编过的文件直接命中缓存。
+      - name: Restore download cache
+        uses: actions/cache/restore@v4
+        with:
+          path: openwrt/dl
+          key: dl-${{ env.VERSION }}-${{ github.run_id }}
+          restore-keys: dl-${{ env.VERSION }}-
+
+      - name: Restore ccache
+        uses: actions/cache/restore@v4
+        with:
+          path: openwrt/.ccache
+          key: ccache-${{ env.VERSION }}-kmods${{ env.MATCH_KMODS }}-${{ github.run_id }}
+          restore-keys: ccache-${{ env.VERSION }}-kmods${{ env.MATCH_KMODS }}-
+
       - name: Update feeds
         run: |
           cd openwrt
@@ -111,6 +129,10 @@ jobs:
             fi
           fi
           cat >> .config <<'EOF'
+          # --- 编译缓存 ---
+          CONFIG_DEVEL=y
+          CONFIG_CCACHE=y
+
           # --- 目标平台与设备 ---
           CONFIG_TARGET_mediatek=y
           CONFIG_TARGET_mediatek_filogic=y
@@ -135,8 +157,14 @@ jobs:
           CONFIG_PACKAGE_luci-app-nlbwmon=y
 
           # --- 代理 ---
-          CONFIG_PACKAGE_luci-app-openclash=y
+          # OpenClash 本体刷机后用 `apk add luci-app-openclash` 装；这里只预装它要的
+          # 内核模块，保证 vermagic 对不上时也能装（ruby 等用户态依赖从官方源拉）。
           CONFIG_PACKAGE_kmod-tun=y
+          CONFIG_PACKAGE_kmod-nft-tproxy=y
+          CONFIG_PACKAGE_kmod-inet-diag=y
+          # 万一有包把 ruby 带进来：ruby 的 YJIT 要编 rust/host，而 rust 要从
+          # ci-artifacts.rust-lang.org 下载的 LLVM 已被删除（404）。
+          # CONFIG_RUBY_ENABLE_YJIT is not set
 
           # --- DNS ---
           # CONFIG_PACKAGE_dnsmasq is not set
@@ -195,6 +223,11 @@ jobs:
             exit 1
           fi
 
+          if grep -q '^CONFIG_RUBY_ENABLE_YJIT=y' .config; then
+            echo "::error::RUBY_ENABLE_YJIT still enabled - rust/host would be built and fail"
+            exit 1
+          fi
+
           echo "=== 包清单核对 ==="
           MISSING=""
           for p in $EXPECTED; do
@@ -212,10 +245,35 @@ jobs:
           cd openwrt
           make -j$(nproc) download
 
+      - name: Save download cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: openwrt/dl
+          key: dl-${{ env.VERSION }}-${{ github.run_id }}
+
       - name: Build firmware
+        # 比整个任务的 355 分钟早结束，留时间保存 ccache
+        timeout-minutes: 315
         run: |
           cd openwrt
           make -j$(nproc) || make -j1 V=s
+
+      - name: ccache stats
+        if: always()
+        run: |
+          cd openwrt
+          [ -d .ccache ] || exit 0
+          staging_dir/host/bin/ccache -s 2>/dev/null || true
+          du -sh .ccache
+
+      - name: Save ccache
+        # 失败、超时也保存，下次接着用
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: openwrt/.ccache
+          key: ccache-${{ env.VERSION }}-kmods${{ env.MATCH_KMODS }}-${{ github.run_id }}
 
       - name: Check images and vermagic
         if: always()
@@ -258,6 +316,7 @@ jobs:
         with:
           name: build-log
           if-no-files-found: ignore
+          include-hidden-files: true
           retention-days: 7
           path: |
             openwrt/logs/
