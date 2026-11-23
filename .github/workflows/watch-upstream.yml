@@ -1,0 +1,71 @@
+name: Watch upstream ImmortalWrt
+
+# 每小时检查 ImmortalWrt 是否打了新的正式版 tag（不含 rc）。
+# 有新版本、官方构建也已上线（config.buildinfo 可下载）、本仓库还没发布过，
+# 就触发 build.yml 构建并自动发布 Release。
+
+on:
+  schedule:
+    - cron: "23 * * * *"
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+
+concurrency:
+  group: watch-upstream
+  cancel-in-progress: false
+
+env:
+  GH_TOKEN: ${{ github.token }}
+  # 只跟踪这个大版本系列；跨大版本（如 26.x）可能要改 ubootmod overlay，
+  # 需要时在仓库 Settings → Variables 里设 TRACK_SERIES 覆盖
+  SERIES: ${{ vars.TRACK_SERIES || '25.12' }}
+  # 同一版本自动构建最多失败几次（每次失败都会存 ccache，下次更快）
+  MAX_ATTEMPTS: 3
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check for new upstream release
+        run: |
+          set -euo pipefail
+          LATEST=$(git ls-remote --tags --refs https://github.com/immortalwrt/immortalwrt.git "v$SERIES.*" \
+            | sed 's#.*refs/tags/v##' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1 || true)
+          if [ -z "$LATEST" ]; then
+            echo "::warning::no stable upstream tag found for series $SERIES"
+            exit 0
+          fi
+          echo "upstream latest: v$LATEST"
+
+          if gh release list -R "$GITHUB_REPOSITORY" --limit 200 --json tagName --jq '.[].tagName' \
+              | grep -q "^v$LATEST-"; then
+            echo "v$LATEST already released here - nothing to do"
+            exit 0
+          fi
+
+          # 官方构建上线前没有 config.buildinfo，vermagic 对不上官方，先等着
+          if ! curl -sfI "https://downloads.immortalwrt.org/releases/$LATEST/targets/mediatek/filogic/config.buildinfo" >/dev/null; then
+            echo "official $LATEST build not published on downloads.immortalwrt.org yet - waiting"
+            exit 0
+          fi
+
+          RUNS=$(gh run list -R "$GITHUB_REPOSITORY" --workflow build.yml --event workflow_dispatch \
+            --limit 100 --json displayTitle,status,conclusion \
+            --jq "[.[] | select(.displayTitle == \"Build $LATEST + release\")]")
+          ACTIVE=$(echo "$RUNS" | jq '[.[] | select(.status != "completed")] | length')
+          FAILED=$(echo "$RUNS" | jq '[.[] | select(.status == "completed" and .conclusion != "success")] | length')
+          if [ "$ACTIVE" -gt 0 ]; then
+            echo "build for $LATEST already queued/running - waiting"
+            exit 0
+          fi
+          if [ "$FAILED" -ge "$MAX_ATTEMPTS" ]; then
+            echo "::error::auto build for $LATEST failed $FAILED times - fix it, then run build.yml manually with release=true"
+            exit 1
+          fi
+
+          echo "triggering build + release for $LATEST (previous failed attempts: $FAILED)"
+          gh workflow run build.yml -R "$GITHUB_REPOSITORY" --ref "${{ github.event.repository.default_branch }}" \
+            -f version="$LATEST" -f match_official_kmods=true -f release=true

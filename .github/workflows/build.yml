@@ -1,4 +1,5 @@
 name: Build 360T7 Firmware
+run-name: ${{ github.event_name == 'workflow_dispatch' && format('Build {0}{1}', inputs.version, inputs.release && ' + release' || '') || github.event.head_commit.message }}
 
 # 官方 ImmortalWrt 25.12 源码 + ubootmod（刷不死 U-Boot）布局
 # 产物从刷不死 U-Boot 的恢复网页（192.168.1.1）刷入，不碰 BL2/FIP。
@@ -14,11 +15,16 @@ on:
         description: 用官方构建种子配置，使内核 vermagic 与官方一致（之后可直接 apk add 官方 kmod；构建更久）
         type: boolean
         default: true
+      release:
+        description: 构建成功后自动发布 GitHub Release（watch-upstream 触发时为 true）
+        type: boolean
+        default: false
   push:
     branches: [main]
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  # 按版本分组：push 构建不会把排队中的自动发布构建顶掉
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ inputs.version }}
   cancel-in-progress: false
 
 env:
@@ -103,14 +109,21 @@ jobs:
         with:
           path: openwrt/dl
           key: dl-${{ env.VERSION }}-${{ github.run_id }}
-          restore-keys: dl-${{ env.VERSION }}-
+          # 新版本第一次构建时退回到旧版本的 dl/，大部分源码包可以复用
+          restore-keys: |
+            dl-${{ env.VERSION }}-
+            dl-
 
       - name: Restore ccache
         uses: actions/cache/restore@v4
         with:
           path: openwrt/.ccache
           key: ccache-${{ env.VERSION }}-kmods${{ env.MATCH_KMODS }}-${{ github.run_id }}
-          restore-keys: ccache-${{ env.VERSION }}-kmods${{ env.MATCH_KMODS }}-
+          # ccache 按内容哈希，跨版本复用是安全的；新版本第一次构建时退回到旧版本的缓存，
+          # 否则冷启动容易超时
+          restore-keys: |
+            ccache-${{ env.VERSION }}-kmods${{ env.MATCH_KMODS }}-
+            ccache-
 
       - name: Update feeds
         run: |
@@ -352,3 +365,47 @@ jobs:
           path: |
             openwrt/logs/
             openwrt/.config
+
+  release:
+    needs: build
+    if: github.event_name == 'workflow_dispatch' && inputs.release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Download firmware
+        uses: actions/download-artifact@v4
+        with:
+          name: 360t7-ubootmod-${{ env.VERSION }}
+          path: fw
+
+      - name: Create release
+        run: |
+          cd fw
+          sha256sum -c sha256sums --ignore-missing
+          TAG="v$VERSION-$(date -u +%Y%m%d)"
+          if gh release view "$TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            TAG="$TAG-r$GITHUB_RUN_NUMBER"
+          fi
+          KERNEL=$(grep -m1 '^kernel - ' *.manifest | sed 's/^kernel - //; s/~.*//')
+          cat > ../notes.md <<EOF
+          ImmortalWrt $VERSION for Qihoo 360T7 — **ubootmod 布局**（108M UBI）
+
+          构建来源：[Actions run $GITHUB_RUN_ID]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID) · commit ${GITHUB_SHA::7} · 上游 [v$VERSION](https://github.com/immortalwrt/immortalwrt/tree/v$VERSION)
+
+          - 内核 ${KERNEL:-?}
+
+          ### 文件说明
+          | 文件 | 用途 |
+          |---|---|
+          | \`*-squashfs-sysupgrade.bin\` | 已是 ubootmod 布局时，在 LuCI / \`sysupgrade\` 中升级 |
+          | \`*-squashfs-factory.bin\` | 在 U-Boot 网页恢复模式中刷入 |
+          | \`*-initramfs-kernel.bin\` | 内存启动临时系统（测试/救砖用） |
+          | \`*.manifest\` | 软件包清单 |
+          | \`sha256sums\` | 校验值 |
+
+          ⚠️ 仅适用于 ubootmod（108M UBI）布局的 360T7。本发布不含 BL2/FIP，请勿刷写 BL2/FIP。
+          EOF
+          gh release create "$TAG" -R "$GITHUB_REPOSITORY" --target "$GITHUB_SHA"             --title "ImmortalWrt $VERSION · 360T7 ubootmod ($(date -u +%F))"             --notes-file ../notes.md             *.bin *.manifest sha256sums
